@@ -17,16 +17,16 @@ def histogram_of_classical_states(string_array):
 
 t1 = time.time()
 
-n = 10
+n = 20
 circuit = Circuit(n)
 for i in range(n):
     circuit.hadamard(i)
-circuit.pauli_y(0)
-circuit.pauli_x(1)
-circuit.pauli_z(6)
-circuit.cnot(3, 6)
-circuit.cnot(3, 9)
-circuit.cnot(3, 8)
+# circuit.pauli_y(0)
+# circuit.pauli_x(1)
+# circuit.pauli_z(6)
+# circuit.cnot(3, 6)
+# circuit.cnot(3, 9)
+# circuit.cnot(3, 8)
 circuit.execute()
 
 t2 = time.time()
