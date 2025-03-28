@@ -19,14 +19,15 @@ t1 = time.time()
 
 n = 10
 circuit = Circuit(n)
+circuit.hadamard(0)
 for i in range(n):
     circuit.hadamard(i)
 circuit.pauli_y(0)
 circuit.pauli_x(1)
 circuit.pauli_z(6)
-circuit.cnot(3, 6)
-circuit.cnot(3, 9)
-circuit.cnot(3, 8)
+circuit.cnot(1, 2)
+circuit.cnot(0, 1)
+circuit.cnot(0, 2)
 circuit.execute()
 
 t2 = time.time()
