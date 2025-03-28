@@ -19,6 +19,7 @@ t1 = time.time()
 
 n = 20
 circuit = Circuit(n)
+circuit.hadamard(0)
 for i in range(n):
     circuit.hadamard(i)
 # circuit.pauli_y(0)

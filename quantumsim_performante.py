@@ -252,14 +252,14 @@ class CircuitUnitaryOperation:
         t1 = time.perf_counter()
         for i in range(0, N):
             if control == i:
-                combined_operation_zero = sparse.kron(combined_operation_zero, ket_bra_00)
-                combined_operation_one  = sparse.kron(combined_operation_one, ket_bra_11)
+                combined_operation_zero = coo_kron(combined_operation_zero, ket_bra_00)
+                combined_operation_one  = coo_kron(combined_operation_one, ket_bra_11)
             elif target == i:
-                combined_operation_zero = sparse.kron(combined_operation_zero, identity)
-                combined_operation_one  = sparse.kron(combined_operation_one, pauli_x)
+                combined_operation_zero = coo_kron(combined_operation_zero, identity)
+                combined_operation_one  = coo_kron(combined_operation_one, pauli_x)
             else:
-                combined_operation_zero = sparse.kron(combined_operation_zero, identity)
-                combined_operation_one  = sparse.kron(combined_operation_one, identity)
+                combined_operation_zero = coo_kron(combined_operation_zero, identity)
+                combined_operation_one  = coo_kron(combined_operation_one, identity)
 
         operation = sparse.coo_matrix(combined_operation_zero + combined_operation_one)
         t2 = time.perf_counter()
@@ -289,7 +289,7 @@ class Circuit:
         self.__operations_cache = {}
 
     def identity(self, q):
-        key = key = ("identity", q)
+        key = ("identity", q)
         description = f"Hadamard on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -304,7 +304,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def pauli_x(self, q):
-        key = key = ("pauli_x", q)
+        key = ("pauli_x", q)
         description = f"pauli_x on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -319,7 +319,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def pauli_y(self, q):
-        key = key = ("pauli_y", q)
+        key = ("pauli_y", q)
         description = f"pauli_y on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -334,7 +334,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def pauli_z(self, q):
-        key = key = ("pauli_z", q)
+        key = ("pauli_z", q)
         description = f"pauli_z on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -364,7 +364,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def phase(self, theta, q):
-        key = key = ("phase", theta, q)
+        key = ("phase", theta, q)
         description = f"Phase with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -379,7 +379,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def rotate_x(self, theta, q):
-        key = key = ("rotate_x", theta, q)
+        key = ("rotate_x", theta, q)
         description = f"Rotate X with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -394,7 +394,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
     
     def rotate_y(self, theta, q):
-        key = key = ("rotate_y", theta, q)
+        key = ("rotate_y", theta, q)
         description = f"Rotate_y with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -409,7 +409,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
     
     def rotate_z(self, theta, q):
-        key = key = ("rotate_z", theta, q)
+        key = ("rotate_z", theta, q)
         description = f"Rotate_z with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -424,7 +424,7 @@ class Circuit:
             self.cache_operation(key, combined_operation)
 
     def cnot(self, control, target):
-        key = key = ("cnot", control, target)
+        key = ("cnot", control, target)
         description = f"CNOT with control qubit {control} and target qubit {target}"
 
         if self.__use_cache and self.retrieve_operation_from_cache(key, description):
@@ -523,3 +523,81 @@ def coo_spmv_flat(rowIdx, colIdx, values, v):
         out[rowIdx[i]] += values[i] * v[colIdx[i]]
 
     return out
+
+def coo_kron(A, B, format=None):
+    if isinstance(A, sparse.sparray) or isinstance(B, sparse.sparray):
+        coo_sparse = sparse.coo_array
+    else:
+        coo_sparse = sparse.coo_matrix
+
+    A = coo_sparse(A)
+    B = coo_sparse(B)
+
+    # use COO
+    if A.ndim != 2:
+        raise ValueError(f"kron requires 2D input arrays. `A` is {A.ndim}D.")
+    output_shape = (A.shape[0]*B.shape[0], A.shape[1]*B.shape[1])
+
+    if A.nnz == 0 or B.nnz == 0:
+        # kronecker product is the zero matrix
+        return coo_sparse(output_shape).asformat(format)
+
+    # expand entries of a into blocks
+    idx_dtype = sparse.get_index_dtype(A.coords, maxval=max(output_shape))
+    row = np.asarray(A.row, dtype=idx_dtype).repeat(B.nnz)
+    col = np.asarray(A.col, dtype=idx_dtype).repeat(B.nnz)
+    data = A.data.repeat(B.nnz)
+
+    row *= B.shape[0]
+    col *= B.shape[1]
+
+    # increment block indices
+    row,col = row.reshape(-1,B.nnz),col.reshape(-1,B.nnz)
+    row += B.row
+    col += B.col
+    row,col = row.reshape(-1),col.reshape(-1)
+
+    # compute block entries
+    data = data.reshape(-1,B.nnz) * B.data
+    data = data.reshape(-1)
+
+    return coo_sparse((data,(row,col)), shape=output_shape).asformat(format)
+
+def coo_kron(A, B, format=None, GPU=False):
+    if isinstance(A, sparse.sparray) or isinstance(B, sparse.sparray):
+        coo_sparse = sparse.coo_array
+    else:
+        coo_sparse = sparse.coo_matrix
+
+    A = coo_sparse(A)
+    B = coo_sparse(B)
+
+    # use COO
+    if A.ndim != 2:
+        raise ValueError(f"kron requires 2D input arrays. `A` is {A.ndim}D.")
+    output_shape = (A.shape[0]*B.shape[0], A.shape[1]*B.shape[1])
+
+    if A.nnz == 0 or B.nnz == 0:
+        # kronecker product is the zero matrix
+        return coo_sparse(output_shape).asformat(format)
+
+    # expand entries of a into blocks
+    idx_dtype = sparse.get_index_dtype(A.coords, maxval=max(output_shape))
+    row = np.asarray(A.row, dtype=idx_dtype).repeat(B.nnz)
+    col = np.asarray(A.col, dtype=idx_dtype).repeat(B.nnz)
+    data = A.data.repeat(B.nnz)
+
+    row *= B.shape[0]
+    col *= B.shape[1]
+
+    # increment block indices
+    row,col = row.reshape(-1,B.nnz),col.reshape(-1,B.nnz)
+    row += B.row
+    col += B.col
+    row,col = row.reshape(-1),col.reshape(-1)
+
+    # compute block entries
+    data = data.reshape(-1,B.nnz) * B.data
+    data = data.reshape(-1)
+
+    return coo_sparse((data,(row,col)), shape=output_shape).asformat(format)
