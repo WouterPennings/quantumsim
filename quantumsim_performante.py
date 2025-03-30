@@ -2,9 +2,15 @@ import numpy as np
 import math
 import cmath
 import time
-from timeit import timeit
 import scipy.sparse as sparse
+import cupy
 import cupyx.scipy.sparse as cupysparse
+from numba import njit
+
+'''
+Symbol for pi
+'''
+pi_symbol = '\u03c0'
 
 class Dirac:
     """
@@ -116,7 +122,7 @@ class StateVector:
         # print(timeit(lambda: coo_spmv_flat(operation.row, operation.col, operation.data, self.state_vector.flatten()), number=100))
         # print(timeit(lambda: coo_spmv(operation.row, operation.col, operation.data, self.state_vector), number=100))
 
-        self.state_vector = coo_spmv_flat(operation.row, operation.col, operation.data, self.state_vector)
+        self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
 
     def measure(self):
         probalities = np.square(np.abs(self.state_vector))
@@ -130,7 +136,7 @@ class StateVector:
     
     def print(self):
         for i, val in enumerate(self.state_vector):
-            print(f"{self.__state_as_string(i, self.N)} : {val[0]}")
+            print(f"{self.__state_as_string(i, self.N)} : {val}")
 
     def __state_as_string(self, i,N):
         """
@@ -159,7 +165,7 @@ class CircuitUnitaryOperation:
         combined_operation= sparse.coo_matrix(np.eye(1,1))
 
         # "Selecting" regular scipy sparse matrix kronecker product
-        kron = sparse.kron
+        kron = coo_kron
 
         print("Generating operation matrix: ", end="", flush=True)
         t1 = time.perf_counter()
@@ -171,7 +177,7 @@ class CircuitUnitaryOperation:
             combined_operation = cupysparse.coo_matrix(combined_operation)
 
             # "Selecting" sparse matrix GPU-accelerated matrix kronecker product
-            kron = cupysparse.kron  
+            kron = coo_kron_gpu
     	
         # Actual computation of kronecker product, this is sort of a iterative problem.
         # Size of "combined_operation" grows exponentially
@@ -239,39 +245,58 @@ class CircuitUnitaryOperation:
     
     @staticmethod
     def get_combined_operation_for_cnot(control, target, N, gpu=False):
-        identity = QubitUnitaryOperation.get_identity()
-        pauli_x = QubitUnitaryOperation.get_pauli_x()
-
-        ket_bra_00 = Dirac.ket_bra(2,0,0)
-        ket_bra_11 = Dirac.ket_bra(2,1,1)
+        # Converting dense numpy matrixes to sparse COO scipy matrixes
+        identity = sparse.coo_matrix(QubitUnitaryOperation.get_identity())
+        pauli_x = sparse.coo_matrix(QubitUnitaryOperation.get_pauli_x())
+        ket_bra_00 = sparse.coo_matrix(Dirac.ket_bra(2,0,0))
+        ket_bra_11 = sparse.coo_matrix(Dirac.ket_bra(2,1,1))
         combined_operation_zero = sparse.coo_matrix(np.eye(1,1))
         combined_operation_one = sparse.coo_matrix(np.eye(1,1))
     
+        # "Selecting" regular scipy sparse matrix kronecker product
+        kron = coo_kron
+
+        if gpu:
+            # Copy data to device (GPU) memory from host (CPU)
+            identity = cupysparse.coo_matrix(identity)
+            pauli_x = cupysparse.coo_matrix(pauli_x)
+            ket_bra_00 = cupysparse.coo_matrix(ket_bra_00)
+            ket_bra_11 = cupysparse.coo_matrix(ket_bra_11)
+            combined_operation_zero = cupysparse.coo_matrix(combined_operation_zero)
+            combined_operation_one = cupysparse.coo_matrix(combined_operation_one)
+
+            # "Selecting" sparse matrix GPU-accelerated matrix kronecker product
+            kron = coo_kron_gpu
+
         print("Generating operation CNOT matrix: ", end="", flush=True)
 
+        # Actual computation of kronecker product, this is sort of a iterative problem.
+        # Size of "combined_operation" grows exponentially
+        # Every qubit makes the kronecker product twice as sparse
+        # Computation is done on GPU based on whether parater "GPU" is "True"
         t1 = time.perf_counter()
         for i in range(0, N):
             if control == i:
-                combined_operation_zero = coo_kron(combined_operation_zero, ket_bra_00)
-                combined_operation_one  = coo_kron(combined_operation_one, ket_bra_11)
+                combined_operation_zero = kron(combined_operation_zero, ket_bra_00)
+                combined_operation_one  = kron(combined_operation_one, ket_bra_11)
             elif target == i:
-                combined_operation_zero = coo_kron(combined_operation_zero, identity)
-                combined_operation_one  = coo_kron(combined_operation_one, pauli_x)
+                combined_operation_zero = kron(combined_operation_zero, identity)
+                combined_operation_one  = kron(combined_operation_one, pauli_x)
             else:
-                combined_operation_zero = coo_kron(combined_operation_zero, identity)
-                combined_operation_one  = coo_kron(combined_operation_one, identity)
+                combined_operation_zero = kron(combined_operation_zero, identity)
+                combined_operation_one  = kron(combined_operation_one, identity)
 
-        operation = sparse.coo_matrix(combined_operation_zero + combined_operation_one)
+        operation = combined_operation_zero + combined_operation_one
+        # Copy data back from device (GPU) to host (CPU)
+        if gpu: operation = operation.get()
+        operation = sparse.coo_matrix(operation)
+
         t2 = time.perf_counter()
 
         bytes = operation.nnz * 4 * 2 + operation.nnz * 16
         print(f"{round(t2-t1, 6)*1000}ms ({bytes:,} bytes)")
 
         return operation
-'''
-Symbol for pi
-'''
-pi_symbol = '\u03c0'
 
 class Circuit:
     """
@@ -284,9 +309,15 @@ class Circuit:
         self.descriptions = []
         self.operations = []
         self.__use_gpu = GPU
-        self.__lazy_evaluation= lazy
+        self.__lazy_evaluation = lazy
         self.__use_cache = cache
         self.__operations_cache = {}
+        
+        # "Warming up" the function, calling it compiles the function using Numba
+        coo_spmv_row(np.array([0], dtype=np.int32), 
+                     np.array([0], dtype=np.int32), 
+                     np.array([0], dtype=np.complex128), 
+                     np.array([0], dtype=np.complex128))
 
     def identity(self, q):
         key = ("identity", q)
@@ -479,10 +510,10 @@ class Circuit:
         print("Saving operation matrix to cache")
         self.__operations_cache[key] = operation
         
-
-def coo_spmv(rowIdx, colIdx, values, v):
+@njit
+def coo_spmv_column(rowIdx, colIdx, values, v):
     """
-    Performs sparse matrix-vector multiplication using COO format.
+    Performs sparse matrix-vector (column based) multiplication using COO format.
     
     Parameters:
     - rowIdx (list[int]): Row indices of nonzero elements.
@@ -493,8 +524,7 @@ def coo_spmv(rowIdx, colIdx, values, v):
     Returns:
     - numpy array: Result vector y = A * v
     """
-    out = np.zeros((len(v), 1), dtype=np.result_type(values, v))  # Initialize output vector
-
+    out = np.zeros((len(v), 1), dtype=values.dtype)  # Initialize output vector
     nnz = len(values)  # Number of nonzero elements
 
     for i in range(nnz):  # Iterate over nonzero elements
@@ -502,9 +532,10 @@ def coo_spmv(rowIdx, colIdx, values, v):
 
     return out
 
-def coo_spmv_flat(rowIdx, colIdx, values, v):
+@njit
+def coo_spmv_row(rowIdx, colIdx, values, v):
     """
-    Performs sparse matrix-vector multiplication using COO format.
+    Performs sparse matrix-vector (row based) multiplication using COO format.
     
     Parameters:
     - rowIdx (list[int]): Row indices of nonzero elements.
@@ -515,8 +546,7 @@ def coo_spmv_flat(rowIdx, colIdx, values, v):
     Returns:
     - numpy array: Result vector y = A * v
     """
-    out = np.zeros(len(v), dtype=np.result_type(values, v))  # Initialize output vector
-
+    out = np.zeros(len(v), dtype=values.dtype)  # Initialize output vector
     nnz = len(values)  # Number of nonzero elements
 
     for i in range(nnz):  # Iterate over nonzero elements
@@ -524,80 +554,69 @@ def coo_spmv_flat(rowIdx, colIdx, values, v):
 
     return out
 
-def coo_kron(A, B, format=None):
-    if isinstance(A, sparse.sparray) or isinstance(B, sparse.sparray):
-        coo_sparse = sparse.coo_array
-    else:
-        coo_sparse = sparse.coo_matrix
-
-    A = coo_sparse(A)
-    B = coo_sparse(B)
-
-    # use COO
-    if A.ndim != 2:
-        raise ValueError(f"kron requires 2D input arrays. `A` is {A.ndim}D.")
-    output_shape = (A.shape[0]*B.shape[0], A.shape[1]*B.shape[1])
+# Based on the scipy implementation
+# Source: https://github.com/scipy/scipy/blob/v1.15.1/scipy/sparse/_construct.py#L458
+# Docs: https://docs.scipy.org/doc/scipy-1.15.1/reference/generated/scipy.sparse.kron.html
+def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
+    output_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
 
     if A.nnz == 0 or B.nnz == 0:
         # kronecker product is the zero matrix
-        return coo_sparse(output_shape).asformat(format)
+        return sparse.coo_sparse(output_shape)
 
-    # expand entries of a into blocks
-    idx_dtype = sparse.get_index_dtype(A.coords, maxval=max(output_shape))
-    row = np.asarray(A.row, dtype=idx_dtype).repeat(B.nnz)
-    col = np.asarray(A.col, dtype=idx_dtype).repeat(B.nnz)
+    # Expand entries of a into blocks
+    # When using more then 32 qubits, increase to int64
+    row = np.asarray(A.row, dtype=np.int32).repeat(B.nnz)
+    col = np.asarray(A.col, dtype=np.int32).repeat(B.nnz)
     data = A.data.repeat(B.nnz)
-
+    
     row *= B.shape[0]
     col *= B.shape[1]
 
     # increment block indices
-    row,col = row.reshape(-1,B.nnz),col.reshape(-1,B.nnz)
+    row = row.reshape(-1, B.nnz)
     row += B.row
+    row = row.reshape(-1)
+
+    col = col.reshape(-1, B.nnz)
     col += B.col
-    row,col = row.reshape(-1),col.reshape(-1)
+    col = col.reshape(-1)
 
     # compute block entries
-    data = data.reshape(-1,B.nnz) * B.data
+    data = data.reshape(-1, B.nnz) * B.data
     data = data.reshape(-1)
 
-    return coo_sparse((data,(row,col)), shape=output_shape).asformat(format)
+    return sparse.coo_sparse((data, (row, col)), shape=output_shape)
 
-def coo_kron(A, B, format=None, GPU=False):
-    if isinstance(A, sparse.sparray) or isinstance(B, sparse.sparray):
-        coo_sparse = sparse.coo_array
-    else:
-        coo_sparse = sparse.coo_matrix
-
-    A = coo_sparse(A)
-    B = coo_sparse(B)
-
-    # use COO
-    if A.ndim != 2:
-        raise ValueError(f"kron requires 2D input arrays. `A` is {A.ndim}D.")
-    output_shape = (A.shape[0]*B.shape[0], A.shape[1]*B.shape[1])
+# Based on the Cupy implementation
+# Source: https://github.com/cupy/cupy/blob/v13.4.1/cupyx/scipy/sparse/_construct.py#L496
+# Docs: https://docs.cupy.dev/en/v13.4.1/reference/generated/cupyx.scipy.sparse.kron.html
+def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
+    out_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
 
     if A.nnz == 0 or B.nnz == 0:
         # kronecker product is the zero matrix
-        return coo_sparse(output_shape).asformat(format)
+        return cupysparse.coo_matrix(out_shape).asformat(format)
 
-    # expand entries of a into blocks
-    idx_dtype = sparse.get_index_dtype(A.coords, maxval=max(output_shape))
-    row = np.asarray(A.row, dtype=idx_dtype).repeat(B.nnz)
-    col = np.asarray(A.col, dtype=idx_dtype).repeat(B.nnz)
-    data = A.data.repeat(B.nnz)
-
-    row *= B.shape[0]
-    col *= B.shape[1]
+    # expand entries of A into blocks
+    row = A.row.astype(cupy.int32, copy=True) * B.shape[0]
+    row = row.repeat(B.nnz)
+    col = A.col.astype(cupy.int32, copy=True) * B.shape[1]
+    col = col.repeat(B.nnz)
+    data = A.data.repeat(B.nnz) 
 
     # increment block indices
-    row,col = row.reshape(-1,B.nnz),col.reshape(-1,B.nnz)
+    row = row.reshape(-1, B.nnz)
     row += B.row
+    row = row.ravel()
+
+    col = col.reshape(-1, B.nnz)
     col += B.col
-    row,col = row.reshape(-1),col.reshape(-1)
+    col = col.ravel()
 
     # compute block entries
-    data = data.reshape(-1,B.nnz) * B.data
-    data = data.reshape(-1)
+    data = data.reshape(-1, B.nnz) * B.data
+    data = data.ravel()
 
-    return coo_sparse((data,(row,col)), shape=output_shape).asformat(format)
+    return cupysparse.coo_matrix(
+        (data, (row, col)), shape=out_shape).asformat(format)
