@@ -17,24 +17,20 @@ def histogram_of_classical_states(string_array):
 
 t1 = time.time()
 
-n = 20
-circuit = Circuit(n)
+# Build the circuit
+circuit = Circuit(2)
 circuit.hadamard(0)
-for i in range(n):
-    circuit.hadamard(i)
-# circuit.pauli_y(0)
-# circuit.pauli_x(1)
-# circuit.pauli_z(6)
-# circuit.cnot(3, 6)
-# circuit.cnot(3, 9)
-# circuit.cnot(3, 8)
-circuit.execute()
+circuit.cnot(0,1)
+# Execute and measure the circuit 100 times
+result = []
+for i in range(10000):
+    circuit.execute()
+    circuit.measure()
+    result.append(circuit.get_classical_state_as_string())
+# Print the array of classical states
+print(result)
+
+histogram_of_classical_states(result)
 
 t2 = time.time()
 print(f"Total running time: {t2-t1} seconds")
-
-# t1 = time.perf_counter()
-# circuit.execute()
-# t2 = time.perf_counter()
-
-# print(f"{round(t2-t1, 6)*1000}ms")
