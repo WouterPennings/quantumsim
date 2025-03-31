@@ -333,25 +333,3 @@ class Circuit:
     def get_classical_state_as_string(self):
         return self.state_vector.get_classical_state_as_string()
     
-
-def coo_spmv(rowIdx, colIdx, values, v):
-    """
-    Performs sparse matrix-vector multiplication using COO format.
-    
-    Parameters:
-    - rowIdx (list[int]): Row indices of nonzero elements.
-    - colIdx (list[int]): Column indices of nonzero elements.
-    - values (list[float]): Nonzero values of the matrix.
-    - v (numpy array): Dense vector for multiplication.
-    
-    Returns:
-    - numpy array: Result vector y = A * v
-    """
-    out = np.zeros(len(v), dtype=np.result_type(values, v))  # Initialize output vector
-
-    nnz = len(values)  # Number of nonzero elements
-
-    for i in range(nnz):  # Iterate over nonzero elements
-        out[rowIdx[i]] += values[i] * v[colIdx[i]]
-
-    return out
