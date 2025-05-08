@@ -104,8 +104,8 @@ class StateVector:
 
     def apply_unitary_operation(self, operation):
         # Check if operation is a unitary matrix
-        # if not np.allclose(np.eye(2**self.N), np.conj(operation.T) @ operation):
-        #     raise ValueError("Input matrix is not unitary")
+        if not np.allclose(np.eye(2**self.N), np.conj(operation.T) @ operation):
+            raise ValueError("Input matrix is not unitary")
         
         t1 = time.perf_counter()
         _ = operation @ self.state_vector
@@ -314,7 +314,8 @@ class Circuit:
         if print_state:
             print("Initial quantum state")
             self.state_vector.print()
-
+        print(type(self.operations))
+        print(type(self.operations[0]))
         for operation, description in zip(self.operations, self.descriptions):
             self.state_vector.apply_unitary_operation(operation)
             self.quantum_states.append(self.state_vector.get_quantum_state())

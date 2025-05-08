@@ -1,3 +1,6 @@
+# TODO
+# > If matrices are too big, return to CPU processing, no GPU acceleration
+
 import math
 import cmath
 import time
@@ -134,8 +137,11 @@ class StateVector:
         self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
 
     def measure(self):
+        print(np.abs(self.state_vector))
         probalities = np.square(np.abs(self.state_vector))
+        print(probalities)
         self.index = np.random.choice(len(probalities), p=probalities)
+        print(self.index)
 
     def get_quantum_state(self):
         return self.state_vector
@@ -168,10 +174,20 @@ class CircuitUnitaryOperation:
     
     @staticmethod
     def get_combined_operation_for_qubit(operation, q, N, gpu=False):
+        # If matrices are too big of GPU memory, it will turn of GPU computation
+        # if gpu:
+        #     mempool = cupy.get_default_memory_pool()
+        #     bytes = mempool.total_bytes()
+
+        #     # Checks whether matrix fits on GPU memory, if not, calculations will be done on GPU
+        #     # Formula to calculate memory usage for haramard (most memory intensive) for N qubits 
+        #     # bytes = 96*2^(N-1)
+        #     gpu = (bytes/2) > 96*2**(N-2)
+
         # Converting dense numpy matrixes to sparse COO scipy matrixes
         operation =  sparse.coo_matrix(operation)
         identity = sparse.coo_matrix(QubitUnitaryOperation.get_identity())
-        combined_operation= sparse.coo_matrix(np.eye(1,1))
+        combined_operation = sparse.coo_matrix(np.eye(1,1))
 
         # "Selecting" regular scipy sparse matrix kronecker product
         kron = coo_kron
@@ -200,9 +216,10 @@ class CircuitUnitaryOperation:
         
         # Copy data back from device (GPU) to host (CPU)
         if gpu: combined_operation = combined_operation.get()
-            
-        t2 = time.perf_counter()
 
+        print(combined_operation.nnz/ (combined_operation.shape[0]**2)*100)
+        
+        t2 = time.perf_counter()
         bytes = combined_operation.nnz * 4 * 2 + combined_operation.nnz * 16
         print(f"{round(t2-t1, 6)*1000}ms ({bytes:,} bytes)")
 
@@ -316,7 +333,7 @@ class Circuit:
         self.state_vector = StateVector(self.N)
         self.quantum_states = [self.state_vector.get_quantum_state()]
         self.descriptions = []
-        self.operations: Union[List[function], List[sparse.coo_matrix]] = []
+        self.operations: Union[list[function], list[sparse.coo_matrix]] = []
         # Only use GPU if available and enabled for use by user.
         self.__use_gpu = use_GPU and GPU_AVAILABLE
         self.__lazy_evaluation = use_lazy
