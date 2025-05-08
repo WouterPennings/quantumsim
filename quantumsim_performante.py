@@ -2,6 +2,7 @@ import numpy as np
 import math
 import cmath
 import time
+import scipy
 import scipy.sparse as sparse
 import cupy
 import cupyx.scipy.sparse as cupysparse
@@ -302,7 +303,7 @@ class Circuit:
     """
     Class representing a quantum circuit of N qubits.
     """
-    def __init__(self, N, cache=False, GPU=False, lazy=False):
+    def __init__(self, N, cache=False, GPU=False, lazy=False, disk=False):
         self.N = N
         self.state_vector = StateVector(self.N)
         self.quantum_states = [self.state_vector.get_quantum_state()]
@@ -310,6 +311,7 @@ class Circuit:
         self.operations = []
         self.__use_gpu = GPU
         self.__lazy_evaluation = lazy
+        self.__use_disk = disk
         self.__use_cache = cache
         self.__operations_cache = {}
         
@@ -562,7 +564,7 @@ def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
 
     if A.nnz == 0 or B.nnz == 0:
         # kronecker product is the zero matrix
-        return sparse.coo_sparse(output_shape)
+        return sparse.coo_matrix(output_shape)
 
     # Expand entries of a into blocks
     # When using more then 32 qubits, increase to int64
@@ -586,7 +588,7 @@ def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
     data = data.reshape(-1, B.nnz) * B.data
     data = data.reshape(-1)
 
-    return sparse.coo_sparse((data, (row, col)), shape=output_shape)
+    return sparse.coo_matrix((data, (row, col)), shape=output_shape)
 
 # Based on the Cupy implementation
 # Source: https://github.com/cupy/cupy/blob/v13.4.1/cupyx/scipy/sparse/_construct.py#L496
@@ -596,7 +598,7 @@ def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
 
     if A.nnz == 0 or B.nnz == 0:
         # kronecker product is the zero matrix
-        return cupysparse.coo_matrix(out_shape).asformat(format)
+        return cupysparse.coo_matrix(out_shape)
 
     # expand entries of A into blocks
     row = A.row.astype(cupy.int32, copy=True) * B.shape[0]
@@ -619,4 +621,4 @@ def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
     data = data.ravel()
 
     return cupysparse.coo_matrix(
-        (data, (row, col)), shape=out_shape).asformat(format)
+        (data, (row, col)), shape=out_shape)
