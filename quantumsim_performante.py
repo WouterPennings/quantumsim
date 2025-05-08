@@ -1,12 +1,22 @@
-import numpy as np
+# TODO
+# > If matrices are too big, return to CPU processing, no GPU acceleration
+
 import math
 import cmath
 import time
-import scipy
+from typing import Union
 import scipy.sparse as sparse
-import cupy
-import cupyx.scipy.sparse as cupysparse
 from numba import njit
+try:
+    import cupy
+    import cupyx.scipy.sparse as cupysparse
+    GPU_AVAILABLE = True
+except:
+    print("[ERROR] Cupy could not be imported, make sure that your have installed Cupy")
+    print("\tIf you do not have a NVIDIA GPU, you cannot install Cupy")
+    print("\tQuantumsim will still work accordingly, just less performant")
+    print("\t > Installation guide: https://docs.cupy.dev/en/stable/install.html")
+    GPU_AVAILABLE = False
 
 '''
 Symbol for pi
@@ -120,14 +130,17 @@ class StateVector:
         #     raise ValueError("Input matrix is not unitary")
 
         # NOTE: A row based statevector is roughly 15% faster than matrix-vector multiplication than a column based statevector
-        # print(timeit(lambda: coo_spmv_flat(operation.row, operation.col, operation.data, self.state_vector.flatten()), number=100))
-        # print(timeit(lambda: coo_spmv(operation.row, operation.col, operation.data, self.state_vector), number=100))
+        # print(timeit(lambda: coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector.flatten()), number=100))
+        # print(timeit(lambda: coo_spmv_column(operation.row, operation.col, operation.data, self.state_vector), number=100))
 
         self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
 
     def measure(self):
+        print(np.abs(self.state_vector))
         probalities = np.square(np.abs(self.state_vector))
+        print(probalities)
         self.index = np.random.choice(len(probalities), p=probalities)
+        print(self.index)
 
     def get_quantum_state(self):
         return self.state_vector
@@ -160,15 +173,25 @@ class CircuitUnitaryOperation:
     
     @staticmethod
     def get_combined_operation_for_qubit(operation, q, N, gpu=False):
+        # If matrices are too big of GPU memory, it will turn of GPU computation
+        # if gpu:
+        #     mempool = cupy.get_default_memory_pool()
+        #     bytes = mempool.total_bytes()
+
+        #     # Checks whether matrix fits on GPU memory, if not, calculations will be done on GPU
+        #     # Formula to calculate memory usage for haramard (most memory intensive) for N qubits 
+        #     # bytes = 96*2^(N-1)
+        #     gpu = (bytes/2) > 96*2**(N-2)
+
         # Converting dense numpy matrixes to sparse COO scipy matrixes
         operation =  sparse.coo_matrix(operation)
         identity = sparse.coo_matrix(QubitUnitaryOperation.get_identity())
-        combined_operation= sparse.coo_matrix(np.eye(1,1))
+        combined_operation = sparse.coo_matrix(np.eye(1,1))
 
         # "Selecting" regular scipy sparse matrix kronecker product
         kron = coo_kron
 
-        print("Generating operation matrix: ", end="", flush=True)
+        print("[INFO] Generating operation matrix: ", end="", flush=True)
         t1 = time.perf_counter()
 
         if gpu:
@@ -192,9 +215,10 @@ class CircuitUnitaryOperation:
         
         # Copy data back from device (GPU) to host (CPU)
         if gpu: combined_operation = combined_operation.get()
-            
-        t2 = time.perf_counter()
 
+        print(combined_operation.nnz/ (combined_operation.shape[0]**2)*100)
+        
+        t2 = time.perf_counter()
         bytes = combined_operation.nnz * 4 * 2 + combined_operation.nnz * 16
         print(f"{round(t2-t1, 6)*1000}ms ({bytes:,} bytes)")
 
@@ -269,7 +293,7 @@ class CircuitUnitaryOperation:
             # "Selecting" sparse matrix GPU-accelerated matrix kronecker product
             kron = coo_kron_gpu
 
-        print("Generating operation CNOT matrix: ", end="", flush=True)
+        print("[INFO] Generating operation CNOT matrix: ", end="", flush=True)
 
         # Actual computation of kronecker product, this is sort of a iterative problem.
         # Size of "combined_operation" grows exponentially
@@ -303,18 +327,27 @@ class Circuit:
     """
     Class representing a quantum circuit of N qubits.
     """
-    def __init__(self, N, cache=False, GPU=False, lazy=False, disk=False):
+    def __init__(self, N, use_cache=False, use_GPU=False, use_lazy=False, disk=False):
         self.N = N
         self.state_vector = StateVector(self.N)
         self.quantum_states = [self.state_vector.get_quantum_state()]
         self.descriptions = []
-        self.operations = []
-        self.__use_gpu = GPU
-        self.__lazy_evaluation = lazy
-        self.__use_disk = disk
-        self.__use_cache = cache
+        self.operations: Union[list[function], list[sparse.coo_matrix]] = []
+        # Only use GPU if available and enabled for use by user.
+        self.__use_gpu = use_GPU and GPU_AVAILABLE
+        self.__lazy_evaluation = use_lazy
+        self.__use_cache = use_cache
         self.__operations_cache = {}
         
+        if use_cache:
+            if use_lazy: print("[Warning] Lazy evaluation and caching cannot be both switched on. Caching is off, lazy evaluation is on")
+            self.__use_cache = not use_lazy
+        else:
+            self.__use_cache = False
+
+        if not GPU_AVAILABLE and use_GPU:
+            print("[Warning] GPU will not be used. 'use_GPU' is set to 'True', but GPU is not available.")
+
         # "Warming up" the function, calling it compiles the function using Numba
         coo_spmv_row(np.array([0], dtype=np.int32), 
                      np.array([0], dtype=np.int32), 
@@ -325,13 +358,24 @@ class Circuit:
         key = ("identity", q)
         description = f"Hadamard on qubit {q}"
 
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        if self.__lazy_evaluation:
+            print("[INFO] Identity operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_identity(q, self.N, gpu=self.__use_gpu)
+                )
             return
+
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_identity(q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
+        
+        print("[INFO] Identity operation added to circuit")
 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
@@ -340,13 +384,24 @@ class Circuit:
         key = ("pauli_x", q)
         description = f"pauli_x on qubit {q}"
 
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        if self.__lazy_evaluation:
+            print("[INFO] Pauli_x operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N, gpu=self.__use_gpu)
+                )
             return
+
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
+
+        print("[INFO] Pauli_x operation added to circuit")
 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
@@ -354,137 +409,238 @@ class Circuit:
     def pauli_y(self, q):
         key = ("pauli_y", q)
         description = f"pauli_y on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] Pauli_y operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_y(q, self.N, gpu=self.__use_gpu)
+                )
             return
+        
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_y(q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Pauli_y operation added to circuit")
+        
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
     def pauli_z(self, q):
         key = ("pauli_z", q)
         description = f"pauli_z on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] Pauli_z operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_z(q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
         
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_z(q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Pauli_z operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
     def hadamard(self, q):
         key = ("hadamard", q)
         description = f"Hadamard on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] hadamard operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_hadamard(q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_hadamard(q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Hadamard operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
     def phase(self, theta, q):
         key = ("phase", theta, q)
         description = f"Phase with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] phase operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_phase(theta, q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_phase(theta, q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] phase operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
     def rotate_x(self, theta, q):
         key = ("rotate_x", theta, q)
         description = f"Rotate X with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] Rotate_x operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_x(theta, q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_x(theta, q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Rotate_x operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
     
     def rotate_y(self, theta, q):
         key = ("rotate_y", theta, q)
         description = f"Rotate_y with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] Rotate_y operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_y(theta, q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_y(theta, q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Rotate_y operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
     
     def rotate_z(self, theta, q):
         key = ("rotate_z", theta, q)
         description = f"Rotate_z with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] Rotate_z operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_z(theta, q, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_z(theta, q, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] Rotate_z operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
     def cnot(self, control, target):
         key = ("cnot", control, target)
         description = f"CNOT with control qubit {control} and target qubit {target}"
-
-        if self.__use_cache and self.retrieve_operation_from_cache(key, description):
-            print("retrieved operation from cache")
+        
+        if self.__lazy_evaluation:
+            print("[INFO] CNOT Operation operation lazely added to circuit")
+            self.descriptions.append(description)
+            self.operations.append(
+                lambda: CircuitUnitaryOperation.get_combined_operation_for_cnot(control, target, self.N, gpu=self.__use_gpu)
+                )
             return
+ 
+        if self.__use_cache: 
+            if self.retrieve_operation_from_cache(key, description):
+                print("[INFO] Retrieved operation from cache, added to circuit")
+                return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_cnot(control, target, self.N, gpu=self.__use_gpu)
         self.descriptions.append(description)
         self.operations.append(combined_operation)
 
+        print("[INFO] CNOT Operation added to circuit")
+ 
         if self.__use_cache:
             self.cache_operation(key, combined_operation)
 
-    def execute(self, print_state=False):
+    def execute(self, print_state=False, benchmark=False):
         self.state_vector = StateVector(self.N)
         if print_state:
             print("Initial quantum state")
             self.state_vector.print()
 
+        # Checking variable type (based on if lazy flag is True) is correct
+        assert isinstance(self.operations, list), "Operations should be a list"
+        if self.__lazy_evaluation == True:
+            assert all(isinstance(op, type(lambda: None)) for op in self.operations), "Operation matrices are lazely evaluated but the operations list is not a list of functions"
+        else:
+            assert all(isinstance(op, sparse.coo_matrix) for op in self.operations), "Operation matrices are evaluated but the operations list is not a list of coo_matrix"
+
         for i, (operation, description) in enumerate(zip(self.operations, self.descriptions)):
+            # print("[INFO] Apply unitary operation: ", end="", flush=True)
+            
             t1 = time.perf_counter()
+
+            if self.__lazy_evaluation:
+                operation = operation()
 
             self.state_vector.apply_unitary_operation(operation)
             self.quantum_states.append(self.state_vector.get_quantum_state())
 
             t2 = time.perf_counter()
-            print(f"{round(t2-t1, 6)*1000}ms")
+            if benchmark:
+                print(f"[INFO] Apply unitary operation: {round(t2-t1, 6)*1000}ms")
 
             if print_state:
                 print(description)
@@ -509,7 +665,7 @@ class Circuit:
         return False
 
     def cache_operation(self, key:tuple, operation:sparse.coo_matrix):
-        print("Saving operation matrix to cache")
+        print("[INFO] Saving operation matrix to cache")
         self.__operations_cache[key] = operation
         
 @njit
@@ -556,6 +712,7 @@ def coo_spmv_row(rowIdx, colIdx, values, v):
 
     return out
 
+
 # Based on the scipy implementation
 # Source: https://github.com/scipy/scipy/blob/v1.15.1/scipy/sparse/_construct.py#L458
 # Docs: https://docs.scipy.org/doc/scipy-1.15.1/reference/generated/scipy.sparse.kron.html
@@ -590,35 +747,41 @@ def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
 
     return sparse.coo_matrix((data, (row, col)), shape=output_shape)
 
-# Based on the Cupy implementation
-# Source: https://github.com/cupy/cupy/blob/v13.4.1/cupyx/scipy/sparse/_construct.py#L496
-# Docs: https://docs.cupy.dev/en/v13.4.1/reference/generated/cupyx.scipy.sparse.kron.html
-def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
-    out_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
+try:
+    # Based on the Cupy implementation
+    # Source: https://github.com/cupy/cupy/blob/v13.4.1/cupyx/scipy/sparse/_construct.py#L496
+    # Docs: https://docs.cupy.dev/en/v13.4.1/reference/generated/cupyx.scipy.sparse.kron.html
+    def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
+        out_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
 
-    if A.nnz == 0 or B.nnz == 0:
-        # kronecker product is the zero matrix
-        return cupysparse.coo_matrix(out_shape)
+        if A.nnz == 0 or B.nnz == 0:
+            # kronecker product is the zero matrix
+            return cupysparse.coo_matrix(out_shape)
 
-    # expand entries of A into blocks
-    row = A.row.astype(cupy.int32, copy=True) * B.shape[0]
-    row = row.repeat(B.nnz)
-    col = A.col.astype(cupy.int32, copy=True) * B.shape[1]
-    col = col.repeat(B.nnz)
-    data = A.data.repeat(B.nnz) 
+        # expand entries of A into blocks
+        row = A.row.astype(cupy.int32, copy=True) * B.shape[0]
+        row = row.repeat(B.nnz)
+        col = A.col.astype(cupy.int32, copy=True) * B.shape[1]
+        col = col.repeat(B.nnz)
+        data = A.data.repeat(B.nnz) 
 
-    # increment block indices
-    row = row.reshape(-1, B.nnz)
-    row += B.row
-    row = row.ravel()
+        # increment block indices
+        row = row.reshape(-1, B.nnz)
+        row += B.row
+        row = row.ravel()
 
-    col = col.reshape(-1, B.nnz)
-    col += B.col
-    col = col.ravel()
+        col = col.reshape(-1, B.nnz)
+        col += B.col
+        col = col.ravel()
 
-    # compute block entries
-    data = data.reshape(-1, B.nnz) * B.data
-    data = data.ravel()
+        # compute block entries
+        data = data.reshape(-1, B.nnz) * B.data
+        data = data.ravel()
 
-    return cupysparse.coo_matrix(
-        (data, (row, col)), shape=out_shape)
+        return cupysparse.coo_matrix(
+            (data, (row, col)), shape=out_shape)
+except NameError:
+    pass
+except Exception as e:
+    print(e)
+    exit(1)
