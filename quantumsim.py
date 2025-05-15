@@ -2989,8 +2989,22 @@ class DeviceParameters(object):
     def is_complete(self) -> bool:
         """ Returns whether all device parameters have been successfully initialized.
         """
-        # Check not None
-        if any((
+        # # Check not None
+        # if any((
+        #         self.T1 is None,
+        #         self.T2 is None,
+        #         self.p is None,
+        #         self.rout is None,
+        #         self.p_int is None,
+        #         self.t_int is None,
+        #         self.tm is None,
+        #         self.dt is None,
+        #         self.metadata is None)):
+        #     return False
+
+        # return True
+    
+        return not any((
                 self.T1 is None,
                 self.T2 is None,
                 self.p is None,
@@ -2999,10 +3013,7 @@ class DeviceParameters(object):
                 self.t_int is None,
                 self.tm is None,
                 self.dt is None,
-                self.metadata is None)):
-            return False
-
-        return True
+                self.metadata is None))
 
     def check_T1_and_T2_times(self, do_raise_exception: bool) -> bool:
         """ Checks the T1 and T2 times. Raises an exception in case of invalid T1, T2 times if the flag is set. Returns
