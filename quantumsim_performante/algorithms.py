@@ -57,12 +57,12 @@ def coo_spmv_row(rowIdx, colIdx, values, v):
 # Based on the scipy implementation
 # Source: https://github.com/scipy/scipy/blob/v1.15.1/scipy/sparse/_construct.py#L458
 # Docs: https://docs.scipy.org/doc/scipy-1.15.1/reference/generated/scipy.sparse.kron.html
-def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
+def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix, format='coo'):
     output_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
 
     if A.nnz == 0 or B.nnz == 0:
         # kronecker product is the zero matrix
-        return sparse.coo_matrix(output_shape)
+        return sparse.coo_matrix(output_shape).asformat(format)
 
     # Expand entries of a into blocks
     # When using more then 32 qubits, increase to int64
@@ -86,18 +86,18 @@ def coo_kron(A:sparse.coo_matrix, B:sparse.coo_matrix):
     data = data.reshape(-1, B.nnz) * B.data
     data = data.reshape(-1)
 
-    return sparse.coo_matrix((data, (row, col)), shape=output_shape)
+    return sparse.coo_matrix((data, (row, col)), shape=output_shape).asformat(format)
 
 try:
     # Based on the Cupy implementation
     # Source: https://github.com/cupy/cupy/blob/v13.4.1/cupyx/scipy/sparse/_construct.py#L496
     # Docs: https://docs.cupy.dev/en/v13.4.1/reference/generated/cupyx.scipy.sparse.kron.html
-    def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix):
+    def coo_kron_gpu(A:cupysparse.coo_matrix, B:cupysparse.coo_matrix, format='coo'):
         out_shape = (A.shape[0] * B.shape[0], A.shape[1] * B.shape[1])
 
         if A.nnz == 0 or B.nnz == 0:
             # kronecker product is the zero matrix
-            return cupysparse.coo_matrix(out_shape)
+            return cupysparse.coo_matrix(out_shape).asformat(format)
 
         # expand entries of A into blocks
         row = A.row.astype(cupy.int32, copy=True) * B.shape[0]
@@ -120,7 +120,7 @@ try:
         data = data.ravel()
 
         return cupysparse.coo_matrix(
-            (data, (row, col)), shape=out_shape)
+            (data, (row, col)), shape=out_shape).asformat(format)
 except NameError:
     pass
 except Exception as e:

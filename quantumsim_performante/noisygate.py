@@ -688,7 +688,7 @@ class NoisyGate:
 
         """ 4) COMBINE CONTRIBUTIONS """
         r = first_cr @ np.kron(x_gate, relaxation_gate) @ second_cr @ np.kron(Y_Rz, sx_gate)
-        # r = sparse.csr_matrix(r)
+        r = sparse.coo_matrix(r)
         return r
     
     @staticmethod
@@ -736,7 +736,7 @@ class NoisyGate:
 
         """ 4) COMBINE CONTRIBUTIONS """
         r = np.kron(Ry, first_sx_gate) @ first_cr @ np.kron(x_gate, relaxation_gate) @ second_cr @ np.kron(second_sx_gate, Y_Z)
-        # r = sparse.csr_matrix(r)
+        r = sparse.coo_matrix(r)
         return r
 
     @staticmethod

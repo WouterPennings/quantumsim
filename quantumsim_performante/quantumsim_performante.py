@@ -18,6 +18,7 @@ finally:
     import scipy.sparse as sparse
     import numpy as np
     from abc import ABC, abstractmethod
+    from time import perf_counter
 
     from quantumsim_performante.noisygate import NoisyGate	
     from quantumsim_performante.algorithms import coo_spmv_row
@@ -60,6 +61,12 @@ class StateVector:
         # A noisy operation does not have to be a unitary matrix
         self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
 
+    def noisy_measure(self):
+        # For a noisy circuit, the sum of probabilities may not be equal to one
+        probalities = np.square(np.abs(self.state_vector))
+        probalities = probalities / np.sum(probalities)
+        self.index = np.random.choice(len(probalities), p=probalities)
+
     def measure_x(self, q):
         # Compute the real part of <psi|X|psi>
         X = CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N)
@@ -81,12 +88,6 @@ class StateVector:
         # print(probalities)
         self.index = np.random.choice(len(probalities), p=probalities)
         # print(self.index)
-
-    def noisy_measure(self):
-        # For a noisy circuit, the sum of probabilities may not be equal to one
-        probalities = np.square(np.abs(self.state_vector))
-        probalities = probalities / np.sum(probalities)
-        self.index = np.random.choice(len(probalities), p=probalities)
 
     def get_quantum_state(self):
         return self.state_vector
@@ -110,20 +111,6 @@ class StateVector:
         state_as_string = binary_string[2:]
         state_as_string = state_as_string.zfill(N)
         return "|" + state_as_string + ">"
-
-class NoisyStateVector(StateVector):
-    def __init__(self, N):
-        super().__init__(N)
-
-    def apply_noisy_operation(self, operation: sparse.coo_matrix):
-        # A noisy operation does not have to be a unitary matrix
-        self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
-
-    def noisy_measure(self):
-        # For a noisy circuit, the sum of probabilities may not be equal to one
-        probalities = np.square(np.abs(self.state_vector))
-        probalities = probalities / np.sum(probalities)
-        self.index = np.random.choice(len(probalities), p=probalities)
 
 class CircuitUnitaryOperation:
     """
@@ -669,7 +656,7 @@ Inherits from Circuit.
 class NoisyCircuit(Circuit):
     def __init__(self, N,  use_cache=False, use_GPU=False, use_lazy=False, disk=False):
         super().__init__(N, use_cache=use_cache, use_GPU=use_GPU, use_lazy=use_lazy, disk=disk)
-        self.state_vector = NoisyStateVector(self.N)
+        self.state_vector = StateVector(self.N)
         self.noisy_operations_state_prep: Union[list[function], list[sparse.coo_matrix]] = []
         self.noisy_operations_incoherent: Union[list[function], list[sparse.coo_matrix]] = []
         self.noisy_operations_readout: Union[list[function], list[sparse.coo_matrix]] = []
@@ -866,7 +853,7 @@ class NoisyCircuit(Circuit):
         gate_length = 5.61777778e-07
 
         # Create an identity matrix for the remaining qubits
-        identity_matrix = np.eye(2**(self.N - 2))
+        identity_matrix = sparse.eye(2**(self.N - 2), format='coo')
 
         # Create cnot matrix
         if control < target:
@@ -877,36 +864,29 @@ class NoisyCircuit(Circuit):
             self.phi[control] = self.phi[control] + np.pi/2 + np.pi
             self.phi[target] = self.phi[target] + np.pi/2
 
-        
-        # FIXME: Use GPU is self.__use_gpu is True
-        # Perform the Kronecker product to expand the CNOT operation
-        # if GPU_AVAILABLE and self.__use_gpu:
-        #     cnot_operation = coo_kron_gpu(cnot_operation, identity_matrix)
-        # else:
-        #     cnot_operation = coo_kron(cnot_operation, identity_matrix)
-        # cnot_operation = coo_kron(cnot_operation, identity_matrix)
-
-        cnot_operation = np.kron(cnot_operation, identity_matrix)
-        cnot_operation = sparse.csr_matrix(cnot_operation)
-
-        # Create swap matrices
-        if control < target:
-            # control qubit should swap with qubit 0
-            swap_control = CircuitUnitaryOperation.get_combined_operation_for_swap(0, control, self.N) if control != 0 else np.eye(2**self.N)
-            swap_target = CircuitUnitaryOperation.get_combined_operation_for_swap(1, target, self.N) if target != 1 else np.eye(2**self.N)
-        else:
-            # target qubit should swap with qubit 0
-            swap_target = CircuitUnitaryOperation.get_combined_operation_for_swap(0, target, self.N) if target != 0 else np.eye(2**self.N)
-            swap_control = CircuitUnitaryOperation.get_combined_operation_for_swap(1, control, self.N) if control != 1 else np.eye(2**self.N)
-        
-        # FIXME: ALL THESE MATRICES ARE CSR NOT COO
-        # print(type(swap_control))
-        # print(type(swap_target))
-        # print(type(cnot_operation))
+        if control < target: control, target = target, control
+        swap_target = CircuitUnitaryOperation.get_combined_operation_for_swap(0, target, self.N) if target != 0 else sparse.eye(2**self.N)
+        swap_control = CircuitUnitaryOperation.get_combined_operation_for_swap(1, control, self.N) if control != 1 else sparse.eye(2**self.N)
 
         # Construct the full CNOT operation with swaps
-        operation = swap_control @ swap_target @ cnot_operation @ swap_target.T.conj() @ swap_control.T.conj() 
-        operation = sparse.coo_matrix(operation)    
+        if GPU_AVAILABLE and self.use_gpu:
+            cnot_operation = coo_kron_gpu(cnot_operation, identity_matrix, format='csr')
+
+            # Copy memory to GPU
+            swap_control_gpu = cupysparse.csr_matrix(swap_control)
+            swap_target_gpu = cupysparse.csr_matrix(swap_target)
+            cnot_gpu = cupysparse.csr_matrix(cnot_operation)
+
+            # Compute matrix multiplications on GPU
+            operation_gpu = swap_control_gpu @ swap_target_gpu @ cnot_gpu @ swap_target_gpu.transpose().conj() @ swap_control_gpu.transpose().conj()
+            
+            # Copy resulting matrix back to CPU
+            operation_gpu = cupysparse.coo_matrix(operation_gpu)
+            operation = operation_gpu.get()
+        else:
+            cnot_operation = coo_kron(cnot_operation, identity_matrix, format='csr')
+            operation = swap_control @ swap_target @ cnot_operation @ swap_target.T.conj() @ swap_control.T.conj() 
+            operation = sparse.coo_matrix(operation)  
 
         self.descriptions.append(f"Noisy CNOT with target qubit {target} and control qubit {control}")
         self.operations.append(operation)
