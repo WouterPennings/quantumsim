@@ -111,6 +111,19 @@ class StateVector:
         state_as_string = state_as_string.zfill(N)
         return "|" + state_as_string + ">"
 
+class NoisyStateVector(StateVector):
+    def __init__(self, N):
+        super().__init__(N)
+
+    def apply_noisy_operation(self, operation: sparse.coo_matrix):
+        # A noisy operation does not have to be a unitary matrix
+        self.state_vector = coo_spmv_row(operation.row, operation.col, operation.data, self.state_vector)
+
+    def noisy_measure(self):
+        # For a noisy circuit, the sum of probabilities may not be equal to one
+        probalities = np.square(np.abs(self.state_vector))
+        probalities = probalities / np.sum(probalities)
+        self.index = np.random.choice(len(probalities), p=probalities)
 
 class CircuitUnitaryOperation:
     """
@@ -656,7 +669,7 @@ Inherits from Circuit.
 class NoisyCircuit(Circuit):
     def __init__(self, N,  use_cache=False, use_GPU=False, use_lazy=False, disk=False):
         super().__init__(N, use_cache=use_cache, use_GPU=use_GPU, use_lazy=use_lazy, disk=disk)
-        self.state_vector = StateVector(self.N)
+        self.state_vector = NoisyStateVector(self.N)
         self.noisy_operations_state_prep: Union[list[function], list[sparse.coo_matrix]] = []
         self.noisy_operations_incoherent: Union[list[function], list[sparse.coo_matrix]] = []
         self.noisy_operations_readout: Union[list[function], list[sparse.coo_matrix]] = []
