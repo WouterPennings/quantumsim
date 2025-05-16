@@ -17,8 +17,6 @@ finally:
     from typing import Union
     import scipy.sparse as sparse
     import numpy as np
-    from abc import ABC, abstractmethod
-    from time import perf_counter
 
     from quantumsim_performante.noisygate import NoisyGate	
     from quantumsim_performante.algorithms import coo_spmv_row
@@ -119,7 +117,7 @@ class CircuitUnitaryOperation:
     
     @staticmethod
     def get_combined_operation_for_qubit(operation, q, N, gpu=False):
-        # If matrices are too big of GPU memory, it will turn of GPU computation
+        # FIXME: If matrices are too big of GPU memory, it will turn of GPU computation
         # if gpu:
         #     mempool = cupy.get_default_memory_pool()
         #     bytes = mempool.total_bytes()
@@ -136,9 +134,6 @@ class CircuitUnitaryOperation:
 
         # "Selecting" regular scipy sparse matrix kronecker product
         kron = coo_kron
-
-        # print("[INFO] Generating operation matrix: ", end="", flush=True)
-        # t1 = time.perf_counter()
 
         if gpu:
             # Copy data to device (GPU) memory from host (CPU)
@@ -161,12 +156,6 @@ class CircuitUnitaryOperation:
         
         # Copy data back from device (GPU) to host (CPU)
         if gpu: combined_operation = combined_operation.get()
-
-        # print(combined_operation.nnz/ (combined_operation.shape[0]**2)*100)
-        
-        # t2 = time.perf_counter()
-        # bytes = combined_operation.nnz * 4 * 2 + combined_operation.nnz * 16
-        # print(f"{round(t2-t1, 6)*1000}ms ({bytes:,} bytes)")
 
         return combined_operation
 
@@ -247,13 +236,10 @@ class CircuitUnitaryOperation:
             # "Selecting" sparse matrix GPU-accelerated matrix kronecker product
             kron = coo_kron_gpu
 
-        # print("[INFO] Generating operation CNOT matrix: ", end="", flush=True)
-
         # Actual computation of kronecker product, this is sort of a iterative problem.
         # Size of "combined_operation" grows exponentially
         # Every qubit makes the kronecker product twice as sparse
         # Computation is done on GPU based on whether parater "GPU" is "True"
-        t1 = time.perf_counter()
         for i in range(0, N):
             if control == i:
                 combined_operation_zero = kron(combined_operation_zero, ket_bra_00)
@@ -269,12 +255,7 @@ class CircuitUnitaryOperation:
         # Copy data back from device (GPU) to host (CPU)
         if gpu: operation = operation.get()
         operation = sparse.coo_matrix(operation)
-
-        t2 = time.perf_counter()
-
-        #bytes = operation.nnz * 4 * 2 + operation.nnz * 16
-        # print(f"{round(t2-t1, 6)*1000}ms ({bytes:,} bytes)")
-
+        
         return operation
 
 class Circuit:
@@ -313,285 +294,226 @@ class Circuit:
     def identity(self, q):
         key = ("identity", q)
         description = f"Hadamard on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * self.N
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Identity operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_identity(q, self.N, gpu=self.use_gpu)
-                )
-            
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_identity(q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
 
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.descriptions.append(description)
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_identity(q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-        
-        # print("[INFO] Identity operation added to circuit")
 
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def pauli_x(self, q):
         key = ("pauli_x", q)
         description = f"pauli_x on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'X' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Pauli_x operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
 
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.descriptions.append(description)
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_x(q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
 
-        # print("[INFO] Pauli_x operation added to circuit")
-
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def pauli_y(self, q):
         key = ("pauli_y", q)
         description = f"pauli_y on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'Y' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Pauli_y operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_y(q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_y(q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
         
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_y(q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
 
-        # print("[INFO] Pauli_y operation added to circuit")
-        
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def pauli_z(self, q):
         key = ("pauli_z", q)
         description = f"pauli_z on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'Z' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Pauli_z operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_z(q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_pauli_z(q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
         
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_pauli_z(q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
 
-        # print("[INFO] Pauli_z operation added to circuit")
- 
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def hadamard(self, q):
         key = ("hadamard", q)
         description = f"Hadamard on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'H' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] hadamard operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_hadamard(q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_hadamard(q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_hadamard(q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
 
-        # print("[INFO] Hadamard operation added to circuit")
- 
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def phase(self, theta, q):
         key = ("phase", theta, q)
         description = f"Phase with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'S' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
         
         if self.lazy_evaluation:
-            # print("[INFO] phase operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_phase(theta, q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_phase(theta, q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_phase(theta, q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-
-        # print("[INFO] phase operation added to circuit")
  
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def rotate_x(self, theta, q):
         key = ("rotate_x", theta, q)
         description = f"Rotate X with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
         
         if self.lazy_evaluation:
-            # print("[INFO] Rotate_x operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_x(theta, q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_x(theta, q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_x(theta, q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-
-        # print("[INFO] Rotate_x operation added to circuit")
  
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
     
     def rotate_y(self, theta, q):
         key = ("rotate_y", theta, q)
         description = f"Rotate_y with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Rotate_y operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_y(theta, q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_y(theta, q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_y(theta, q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-
-        # print("[INFO] Rotate_y operation added to circuit")
  
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
     
     def rotate_z(self, theta, q):
         key = ("rotate_z", theta, q)
         description = f"Rotate_z with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
+        self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] Rotate_z operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_z(theta, q, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_rotate_z(theta, q, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_rotate_z(theta, q, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-
-        # print("[INFO] Rotate_z operation added to circuit")
  
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
     def cnot(self, control, target):
         key = ("cnot", control, target)
         description = f"CNOT with control qubit {control} and target qubit {target}"
+        self.descriptions.append(description)
         gate_as_string = ''.join('*' if i == control else 'X' if i == target else '.' for i in range(self.N))
         self.gates.append(gate_as_string)
 
         if self.lazy_evaluation:
-            # print("[INFO] CNOT Operation operation lazely added to circuit")
-            self.descriptions.append(description)
-            self.operations.append(
-                lambda: CircuitUnitaryOperation.get_combined_operation_for_cnot(control, target, self.N, gpu=self.use_gpu)
-                )
+            l = lambda: CircuitUnitaryOperation.get_combined_operation_for_cnot(control, target, self.N, gpu=self.use_gpu)
+            self.operations.append(l)
             return
  
-        if self.use_cache: 
-            if self.retrieve_operation_from_cache(key, description):
-                # print("[INFO] Retrieved operation from cache, added to circuit")
-                return
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         combined_operation = CircuitUnitaryOperation.get_combined_operation_for_cnot(control, target, self.N, gpu=self.use_gpu)
-        self.descriptions.append(description)
         self.operations.append(combined_operation)
-
-        # print("[INFO] CNOT Operation added to circuit")
  
         if self.use_cache:
-            self.cache_operation(key, combined_operation)
+            self.operations_cache[key] = combined_operation
 
-    def execute(self, print_state=False, benchmark=False):
+    def execute(self, print_state=False):
         self.state_vector = StateVector(self.N)
         if print_state:
             print("Initial quantum state")
@@ -605,19 +527,10 @@ class Circuit:
             assert all(isinstance(op, sparse.coo_matrix) for op in self.operations), "Operation matrices are evaluated but the operations list is not a list of coo_matrix"
 
         for i, (operation, description) in enumerate(zip(self.operations, self.descriptions)):
-            # print("[INFO] Apply unitary operation: ", end="", flush=True)
-            
-            t1 = time.perf_counter()
-
-            if self.lazy_evaluation:
-                operation = operation()
+            if self.lazy_evaluation: operation = operation()
 
             self.state_vector.apply_unitary_operation(operation)
             self.quantum_states.append(self.state_vector.get_quantum_state())
-
-            t2 = time.perf_counter()
-            if benchmark:
-                print(f"[INFO] Apply unitary operation: {round(t2-t1, 6)*1000}ms")
 
             if print_state:
                 print(description)
@@ -633,17 +546,6 @@ class Circuit:
 
     def get_classical_state_as_string(self):
         return self.state_vector.get_classical_state_as_string()
-
-    def retrieve_operation_from_cache(self, key:tuple, description:str):
-        if key in self.operations_cache:
-            self.descriptions.append(description)
-            self.operations.append(self.operations_cache[key])
-            return True
-        return False
-
-    def cache_operation(self, key:tuple, operation:sparse.coo_matrix):
-        # print("[INFO] Saving operation matrix to cache")
-        self.operations_cache[key] = operation
         
     def print_circuit(self):
         for description in self.descriptions:
@@ -1032,6 +934,7 @@ class NoisyCircuit(Circuit):
             self.state_vector.apply_unitary_operation(operation)
             self.quantum_states.append(self.state_vector.get_quantum_state())
 
+            # FIXME: What is this? Other implementation of checking whether the string containing the description contains some substring...
             if "Coherent noise" not in description:
                 for noisy_operation in self.noisy_operations_incoherent:
                     if self.lazy_evaluation: noisy_operation = noisy_operation()
@@ -1079,166 +982,3 @@ class NoisyCircuit(Circuit):
     
     def get_z_measures(self, q):
         return self.z_measures[q]
-
-class NoisyGateInstruction(ABC):
-    @abstractmethod
-    def getNoisyOperation(self):
-        pass
-
-class NoisyPauliX(NoisyGateInstruction):
-    def __init__(self, q: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None, ):
-        self.q = q
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhi(self, phi: float):
-        self.phi = phi
-
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
-    
-class NoisyPauliY(NoisyGateInstruction):
-    def __init__(self, q: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None, ):
-        self.q = q
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhi(self, phi: float):
-        self.phi = phi
-        
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
-
-class NoisyPauliZ(NoisyGateInstruction):
-    def __init__(self, q: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None, ):
-        self.q = q
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhi(self, phi: float):
-        self.phi = phi
-
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
-
-class NoisyPhase(NoisyGateInstruction):
-    def __init__(self, theta: float, q: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None, ):
-        self.q = q
-        self.theta = theta
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setPhi(self, phi: float):
-        self.phi = phi
-
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
-
-class NoisyHadamard(NoisyGateInstruction):
-    def __init__(self, q: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None, ):
-        self.q = q
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhi(self, phi: float):
-        self.phi = phi
-        
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
-    
-class NoisyCNOT(NoisyGateInstruction):
-    def __init__(self, c_qubit: int, t_qubit: int, N: int, c_p: float= None, t_p: float= None, c_T1: float= None, t_T1: float= None, c_T2: float= None, t_T2: float= None, gate_error: float=None):
-        self.c_qubit = c_qubit
-        self.t_qubit = t_qubit
-        self.N = N
-        self.c_p = c_p
-        self.t_p = t_p
-        self.c_T1 = c_T1
-        self.t_T1 = t_T1
-        self.c_T2 = c_T2
-        self.t_T2 = t_T2
-        self.gate_error = gate_error
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhiControl(self, phi: float):
-        self.c_phi = phi
-
-    def setPhiTarget(self, phi: float):
-        self.t_phi = phi
-
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        # This is a solution for mimicking noise of two qubits by adding single qubit gates, returns a pauli x gate
-        # return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.c_phi, self.p, self.T1, self.T2),self.q, self.N)
-
-        gate_length = 5.61777778e-07
-
-        # Create an identity matrix for the remaining qubits
-        identity_matrix = np.eye(2**(self.N - 2))
-
-        # Create cnot matrix
-        if self.c_qubit < self.t_qubit:
-            cnot_operation = NoisyGate.construct_cnot(self.c_phi, self.t_phi, gate_length, self.gate_error, self.c_p, self.t_p, self.c_T1, self.c_T2, self.t_T1, self.t_T2)
-            self.c_phi = self.c_phi - np.pi/2
-        else:
-            cnot_operation = NoisyGate.construct_cnot_inverse(self.c_phi, self.t_phi, gate_length, self.gate_error, self.c_p, self.t_p, self.c_T1, self.c_T2, self.t_T1, self.t_T2)
-            self.c_phi = self.c_phi + np.pi/2 + np.pi
-            self.t_phi = self.t_phi + np.pi/2
-        
-        # Perform the Kronecker product to expand the CNOT operation
-        cnot_operation = np.kron(cnot_operation, identity_matrix)
-
-        # Create swap matrices
-        if self.c_qubit < self.t_qubit:
-            # control qubit should swap with qubit 0
-            swap_control = CircuitUnitaryOperation.get_combined_operation_for_swap(0, self.c_qubit, self.N) if self.c_qubit != 0 else np.eye(2**self.N)
-            swap_target = CircuitUnitaryOperation.get_combined_operation_for_swap(1, self.t_qubit, self.N) if self.t_qubit != 1 else np.eye(2**self.N)
-        else:
-            # target qubit should swap with qubit 0
-            swap_target = CircuitUnitaryOperation.get_combined_operation_for_swap(0, self.t_qubit, self.N) if self.t_qubit != 0 else np.eye(2**self.N)
-            swap_control = CircuitUnitaryOperation.get_combined_operation_for_swap(1, self.c_qubit, self.N) if self.c_qubit != 1 else np.eye(2**self.N)
-
-        # Construct the full CNOT operation with swaps
-        operation = swap_control @ swap_target @ cnot_operation @ swap_target.T.conj() @ swap_control.T.conj() 
-        return operation
-    
-class NoisyReset(NoisyGateInstruction):
-    def __init__(self, q: int, readBit: int, totalQubits: int, p: float = None, T1: float = None, T2: float = None):
-        self.q = q
-        self.readBit = readBit
-        self.N = totalQubits
-        self.p = p
-        self.T1 = T1
-        self.T2 = T2
-
-    def setTheta(self, theta: float):
-        self.theta = theta
-        
-    def setPhi(self, phi: float):
-        self.phi = phi
-
-    def getNoisyOperation(self) -> CircuitUnitaryOperation:
-        return CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(self.theta, self.phi, self.p, self.T1, self.T2),self.q, self.N)
