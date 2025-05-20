@@ -19,9 +19,8 @@ finally:
     import numpy as np
 
     from quantumsim_performante.noisygate import NoisyGate	
-    from quantumsim_performante.algorithms import coo_spmv_row
+    from quantumsim_performante.algorithms import coo_spmv_row, coo_kron
     from quantumsim_performante.device_parameters import DeviceParameters
-    from quantumsim_performante.algorithms import coo_kron
     from quantumsim_performante.dirac import Dirac
     from quantumsim_performante.qubit_unitary_operation import QubitUnitaryOperation
 
