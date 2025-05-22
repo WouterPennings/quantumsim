@@ -291,7 +291,7 @@ class Circuit:
                      np.array([0], dtype=np.complex128))
 
     def identity(self, q):
-        key = ("identity", q)
+        key = (False, "identity", q)
         description = f"Hadamard on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * self.N
@@ -314,7 +314,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def pauli_x(self, q):
-        key = ("pauli_x", q)
+        key = (False, "pauli_x", q)
         description = f"pauli_x on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'X' + '.' * (self.N - q - 1)
@@ -337,7 +337,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def pauli_y(self, q):
-        key = ("pauli_y", q)
+        key = (False, "pauli_y", q)
         description = f"pauli_y on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'Y' + '.' * (self.N - q - 1)
@@ -359,7 +359,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def pauli_z(self, q):
-        key = ("pauli_z", q)
+        key = (False, "pauli_z", q)
         description = f"pauli_z on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'Z' + '.' * (self.N - q - 1)
@@ -381,7 +381,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def hadamard(self, q):
-        key = ("hadamard", q)
+        key = (False, "hadamard", q)
         description = f"Hadamard on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'H' + '.' * (self.N - q - 1)
@@ -403,7 +403,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def phase(self, theta, q):
-        key = ("phase", theta, q)
+        key = (False, "phase", theta, q)
         description = f"Phase with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'S' + '.' * (self.N - q - 1)
@@ -425,7 +425,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def rotate_x(self, theta, q):
-        key = ("rotate_x", theta, q)
+        key = (False, "rotate_x", theta, q)
         description = f"Rotate X with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
@@ -447,7 +447,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
     
     def rotate_y(self, theta, q):
-        key = ("rotate_y", theta, q)
+        key = (False, "rotate_y", theta, q)
         description = f"Rotate_y with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
@@ -469,7 +469,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
     
     def rotate_z(self, theta, q):
-        key = ("rotate_z", theta, q)
+        key = (False, "rotate_z", theta, q)
         description = f"Rotate_z with theta = {theta/np.pi:.3f} {pi_symbol} on qubit {q}"
         self.descriptions.append(description)
         gate_as_string = '.' * q + 'R' + '.' * (self.N - q - 1)
@@ -491,7 +491,7 @@ class Circuit:
             self.operations_cache[key] = combined_operation
 
     def cnot(self, control, target):
-        key = ("cnot", control, target)
+        key = (False, "cnot", control, target)
         description = f"CNOT with control qubit {control} and target qubit {target}"
         self.descriptions.append(description)
         gate_as_string = ''.join('*' if i == control else 'X' if i == target else '.' for i in range(self.N))
@@ -590,7 +590,15 @@ class NoisyCircuit(Circuit):
             T1 (float): Qubit's amplitude damping time in ns.
             T2 (float): Qubit's dephasing time in ns.
         """
-        
+        key = (True, "pauli_x", q)  
+        self.descriptions.append(f"Noisy Pauli X on qubit {q}")
+        gate_as_string = '.' * q + 'X' + '.' * (self.N - q - 1)
+        self.gates.append(gate_as_string)
+
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
+
         # If any noise parameter is None use the generated value
         if p  is None: p = self.parameters["p"][q]
         if T1 is None: T1 = self.parameters["T1"][q]
@@ -604,11 +612,10 @@ class NoisyCircuit(Circuit):
             combined_operation = lambda: CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
         else:
             combined_operation = CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
+        
         self.operations.append(combined_operation)
-        self.descriptions.append(f"Noisy Pauli X on qubit {q}")
-
-        gate_as_string = '.' * q + 'X' + '.' * (self.N - q - 1)
-        self.gates.append(gate_as_string)
+        if self.use_cache:
+            self.operations_cache[key] = combined_operation
 
     # Define the new Pauli Y gate with integrated noise 
     def noisy_pauli_y(self, q: int, p: float= None, T1: float= None, T2: float= None):
@@ -620,6 +627,14 @@ class NoisyCircuit(Circuit):
             T1 (float): Qubit's amplitude damping time in ns.
             T2 (float): Qubit's dephasing time in ns.
         """
+        key = (True, "pauli_y", q)
+        self.descriptions.append(f"Noisy Pauli Y on qubit {q}")
+        gate_as_string = '.' * q + 'Y' + '.' * (self.N - q - 1)
+        self.gates.append(gate_as_string)
+
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         # If any noise parameter is None use the generated value
         if p  is None: p = self.parameters["p"][q]
@@ -637,11 +652,10 @@ class NoisyCircuit(Circuit):
             combined_operation = lambda: CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
         else:
             combined_operation = CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
+        
         self.operations.append(combined_operation)
-        self.descriptions.append(f"Noisy Pauli Y on qubit {q}")
-
-        gate_as_string = '.' * q + 'Y' + '.' * (self.N - q - 1)
-        self.gates.append(gate_as_string)
+        if self.use_cache:
+            self.operations_cache[key] = combined_operation
 
     # Define the new "virtual" Pauli Z gate
     def noisy_pauli_z(self, q: int):
@@ -650,6 +664,7 @@ class NoisyCircuit(Circuit):
         Args:
             q (int): Qubit to operate on.
         """
+        key = (False, "pauli_x", q)
 
         # Execute a virtual Rz gate
         self.virtual_rotate_z(q, np.pi)
@@ -664,6 +679,11 @@ class NoisyCircuit(Circuit):
             T1 (float): Qubit's amplitude damping time in ns.
             T2 (float): Qubit's dephasing time in ns.
         """
+        # FIXME: Implement caching for noisy hadamard gate
+        key = (True, "hadamard", q)
+        self.descriptions.append(f"Noisy Hadamard on qubit {q}")
+        gate_as_string = '.' * q + 'H' + '.' * (self.N - q - 1)
+        self.gates.append(gate_as_string)
 
         # If any noise parameter is None use the generated value
         if p  is None: p = self.parameters["p"][q]
@@ -681,11 +701,11 @@ class NoisyCircuit(Circuit):
             combined_operation = lambda: CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
         else:
             combined_operation = CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
+        
         self.operations.append(combined_operation)
-        self.descriptions.append(f"Noisy Hadamard on qubit {q}")
+        if self.use_cache:
+            self.operations_cache[key] = combined_operation
 
-        gate_as_string = '.' * q + 'H' + '.' * (self.N - q - 1)
-        self.gates.append(gate_as_string)
 
         # To complete the gate end with a virtual Rz gate
         self.virtual_rotate_z(q, np.pi / 2)
@@ -700,8 +720,16 @@ class NoisyCircuit(Circuit):
             T1 (float): Qubit's amplitude damping time in ns.
             T2 (float): Qubit's dephasing time in ns.
         """
+        key = (True, "phase", theta, q)
+        self.descriptions.append(f"Noisy X rotation of {theta} on qubit {q}")
+        gate_as_string = '.' * q + 'S' + '.' * (self.N - q - 1)
+        self.gates.append(gate_as_string)   
 
-         # If any noise parameter is None use the generated value
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
+
+        # If any noise parameter is None use the generated value
         if p is None: p = self.parameters["p"][q]
         if T1 is None: T1 = self.parameters["T1"][q]
         if T2 is None: T2 = self.parameters["T2"][q]
@@ -715,16 +743,17 @@ class NoisyCircuit(Circuit):
             combined_operation = lambda: CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
         else: 
             combined_operation = CircuitUnitaryOperation.get_combined_operation_for_qubit(NoisyGate.construct(theta, phi, p, T1, T2), q, self.N)
+        
         self.operations.append(combined_operation)
-        self.descriptions.append(f"Noisy X rotation of {theta} on qubit {q}")
+        if self.use_cache:
+            self.operations_cache[key] = combined_operation
 
-        gate_as_string = '.' * q + 'S' + '.' * (self.N - q - 1)
-        self.gates.append(gate_as_string)
 
         # Get out of hadamard basis
         self.hadamard(q)
 
     # Define the new cnot gate with integrated noise 
+    # FIXME: Implement lazy evaluation for noisy CNOT
     def noisy_cnot(self, control: int, target: int, c_p: float= None, t_p: float= None, c_T1: float= None, t_T1: float= None, c_T2: float= None, t_T2: float= None, gate_error: float=None):
         """Adds a noisy cnot gate to the circuit with depolarizing and
         relaxation errors on both qubits during the unitary evolution.
@@ -740,6 +769,14 @@ class NoisyCircuit(Circuit):
             t_T2 (float): Dephasing time in ns for the target qubit.
             gate_error (float): CNOT depolarizing error probability.
         """
+        key = (True, "cnot", control, target)
+        self.descriptions.append(f"Noisy CNOT with target qubit {target} and control qubit {control}")
+        gate_as_string = ''.join('*' if i == control else 'X' if i == target else '.' for i in range(self.N))
+        self.gates.append(gate_as_string)
+
+        if self.use_cache and key in self.operations_cache: 
+            self.operations.append(self.operations_cache[key])
+            return
 
         # If any noise parameter is None use the generated value
         if c_p  is None: c_p = self.parameters["p"][control]
@@ -788,12 +825,11 @@ class NoisyCircuit(Circuit):
             cnot_operation = coo_kron(cnot_operation, identity_matrix, format='csr')
             operation = swap_control @ swap_target @ cnot_operation @ swap_target.T.conj() @ swap_control.T.conj() 
             operation = sparse.coo_matrix(operation)  
-
-        self.descriptions.append(f"Noisy CNOT with target qubit {target} and control qubit {control}")
+        
         self.operations.append(operation)
+        if self.use_cache:
+            self.operations_cache[key] = operation
 
-        gate_as_string = ''.join('*' if i == control else 'X' if i == target else '.' for i in range(self.N))
-        self.gates.append(gate_as_string)
 
     # Define a virtual Rz gate to mimic the "quantum-gates" package
     def virtual_rotate_z(self, q: int, theta: float):

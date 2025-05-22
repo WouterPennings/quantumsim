@@ -1,9 +1,50 @@
 import random
 from quantumsim_performante.quantumsim_performante import Circuit, NoisyCircuit
+import quantumsim_performante.quantumutil as QuantumUtil
 import numpy as np
 import networkx as nx
+from collections import Counter
 
-def show_graph_partition(nodes, edges, partition):
+def compute_partition(nodes:list, edges:list, result:list) -> dict:
+    """
+    Compute partition from the most occurring measurement
+
+    Parameters:
+    nodes  : list of nodes
+    edges  : list of edges
+    result : list of strings containing measurements
+
+    Returns:
+    Partition corresponding to most occurring result
+    """
+
+    # Count occurrences of each string in result
+    counter = Counter(result)
+
+    # Get the most occurring string from result
+    most_common_string = counter.most_common(1)[0][0]
+
+    # Determine partition corresponding to the most occurring string
+    bit_string = most_common_string[1:-1]
+    partition = {node: 0 if bit_string[node] == '0' else 1 for node in nodes}
+
+    # Return partition corresponding to the most occurrring string in result
+    return partition
+
+def show_graph(nodes, edges, seed=42):
+    G = nx.Graph()
+    G.add_nodes_from(nodes)
+    G.add_edges_from(edges)
+
+    # Layout to draw the graph
+    pos = nx.spring_layout(G, seed=seed)
+
+    # Draw nodes and edges
+    nx.draw_networkx_nodes(G, pos, node_color='skyblue', node_size=800, edgecolors='black')
+    nx.draw_networkx_labels(G, pos)
+    nx.draw_networkx_edges(G, pos)
+
+def show_graph_partition(nodes, edges, partition, seed=42):
     """
     Show graph partition
 
@@ -19,7 +60,7 @@ def show_graph_partition(nodes, edges, partition):
     G.add_edges_from(edges)
 
     # Layout to draw the graph
-    pos = nx.spring_layout(G, seed=42)
+    pos = nx.spring_layout(G, seed=seed)
 
     # Colors for the nodes
     colors = ['skyblue' if partition[node] == 0 else 'lightgreen' for node in G.nodes()]
@@ -52,36 +93,75 @@ def random_partition(nodes:list) -> dict:
 def cut_size(edges, partition):
     return sum(1 for u, v in edges if partition[u] != partition[v])
 
-def maxcut_bruteforce(nodes, edges):
+def compute_average_cut_size(nodes:list, edges:list, result:list) -> float:
     """
-    Finds an optimal solution of the max-cut problem
+    Compute average cut size
 
     Parameters:
-    nodes        : list of nodes 
-    edges        : list of edges
+    nodes  : list of nodes
+    edges  : list of edges
+    result : list of measurements
 
     Returns:
-    partition with maximum cut size
-    cut size of this partition
+    average cut size
+    """
+    occurrences = Counter(result)
+    total_nr_occurrences = len(result)
+    sum_cut_size = 0
+    for string, count in occurrences.items():
+        bit_string = string[1:-1]
+        partition = {node: bit_string[node] for node in nodes}
+        partition_cut_size = cut_size(edges, partition)
+        sum_cut_size += partition_cut_size*count
+
+    average_cut_size = sum_cut_size/total_nr_occurrences
+    return average_cut_size
+
+def maxcut_bruteforce(nodes, edges):
+    """
+    Finds an optimal solution of the max-cut problem and returns all partitions
+    with their cut sizes, and the index of the partition with the maximum cut size.
+
+    Parameters:
+    nodes       : list of nodes
+    edges       : list of edges
+
+    Returns:
+    all_partitions_data : list of tuples, where each tuple is (partition, cut_size)
+    max_cut_index       : index in all_partitions_data corresponding to the max cut
     """
     nr_nodes = len(nodes)
     nr_partitions = 2**nr_nodes
-    max_cut_size = 0
-    for p in range(1,nr_partitions-1):
-        binary_digits = format(p, f'0{nr_nodes}b')
+    
+    all_partitions_data = []
+    max_cut_size = -1  # Initialize with a value lower than any possible cut size
+    max_cut_index = -1
+
+    # We iterate from 0 to nr_partitions - 1 to include all possible partitions.
+    # The problem statement for max-cut usually includes trivial partitions (all nodes in one set).
+    # If you specifically want to exclude trivial partitions (all nodes in one set),
+    # you can iterate from 1 to nr_partitions - 2 as in your original code.
+    # For a comprehensive list, iterating from 0 to nr_partitions - 1 is generally better.
+    for i in range(nr_partitions):
+        binary_digits = format(i, f'0{nr_nodes}b')
         partition = {}
-        for n in nodes:
-            partition[n] = 0 if binary_digits[n] == '0' else 1
+        for n_idx, n in enumerate(nodes):
+            partition[n] = 0 if binary_digits[n_idx] == '0' else 1 # Corrected index access
+
         current_cut_size = cut_size(edges, partition)
-        print(f"Partition {partition} has cut size {current_cut_size}")
+        
+        # Store the current partition and its cut size
+        all_partitions_data.append((partition.copy(), current_cut_size))
+        
+        # Check if this is the new maximum cut
         if current_cut_size > max_cut_size:
             max_cut_size = current_cut_size
-            max_cut_partition = partition.copy()
-        
-    return max_cut_partition, max_cut_size
+            max_cut_index = len(all_partitions_data) - 1 # Store the index of the current partition
+            
+    return all_partitions_data, max_cut_index
 
 # Create the QAOA circuit
-def qaoa_circuit(gamma:list[float], beta:list[float], nodes:list, edges:list, p:int) -> Circuit:
+def qaoa_circuit(gamma:list[float], beta:list[float], nodes:list, edges:list, p:int, use_cache=True, use_GPU=False, use_lazy=False) -> Circuit:
     """
     Creates a quantum circuit of p layers for the Quantum Approximate Optimiziation Algorithm
 
@@ -102,7 +182,7 @@ def qaoa_circuit(gamma:list[float], beta:list[float], nodes:list, edges:list, p:
     
     # Create circuit witn n qubits, where n is the number of nodes
     n = len(nodes)
-    circuit = Circuit(n)
+    circuit = Circuit(n, use_cache=use_cache, use_GPU=use_GPU, use_lazy=use_lazy)
     
     # Initialize circuit by applying the Hadamard gate to all qubits
     for q in range(n):
@@ -125,7 +205,7 @@ def qaoa_circuit(gamma:list[float], beta:list[float], nodes:list, edges:list, p:
     return circuit
 
 # Create the QAOA noisycircuit
-def qaoa_circuit_noisy(gamma:list[float], beta:list[float], nodes:list, edges:list, p:int) -> Circuit:
+def qaoa_circuit_noisy(gamma:list[float], beta:list[float], nodes:list, edges:list, p:int, use_cache=True, use_GPU=False) -> Circuit:
     """
     Creates a quantum circuit of p layers for the Quantum Approximate Optimiziation Algorithm
 
@@ -146,7 +226,7 @@ def qaoa_circuit_noisy(gamma:list[float], beta:list[float], nodes:list, edges:li
     
     # Create circuit witn n qubits, where n is the number of nodes
     n = len(nodes)
-    circuit = NoisyCircuit(n)
+    circuit = NoisyCircuit(n, use_cache=use_cache, use_GPU=use_GPU)
     
     # Initialize circuit by applying the Hadamard gate to all qubits
     for q in range(n):
@@ -166,3 +246,17 @@ def qaoa_circuit_noisy(gamma:list[float], beta:list[float], nodes:list, edges:li
     
     #return circuit
     return circuit
+
+def maxcut_QAOA(nodes:list, edges:list, noisy=False, p=50, gamma_max=1.0, beta_max=1.0, nr_measurements=200000, use_GPU=False, use_cache=False, use_lazy=False) -> list:
+    gamma = []
+    beta = []
+    for layer in range(p):
+        gamma.append(gamma_max * (layer/p))
+        beta.append(beta_max * ((p - layer)/p))
+    if noisy:
+        circuit = qaoa_circuit_noisy(gamma, beta, nodes, edges, p=p, use_GPU=use_GPU, use_cache=use_cache)
+    else:
+        circuit = qaoa_circuit(gamma, beta, nodes, edges, p=p, use_GPU=use_GPU, use_cache=use_cache, use_lazy=use_lazy)
+    
+    result = QuantumUtil.measure_circuit(circuit, nr_measurements=nr_measurements)
+    return result

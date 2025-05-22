@@ -2042,7 +2042,7 @@ class QuantumUtil:
         result = []
         for i in range(nr_measurements):
             circuit.measure()
-            result.append(circuit.get_classical_state_as_string(little_endian_formatted))
+            result.append(circuit.get_classical_state_as_string())
         return result
 
     """"
